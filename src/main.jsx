@@ -1,6 +1,29 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronRight, Clock3, Copy, FileUp, LayoutDashboard, Plus, Search, Share2, Timer, Users, XCircle } from 'lucide-react';
+import { 
+  ArrowLeft, 
+  ArrowRight, 
+  Check, 
+  CheckCircle2, 
+  ChevronRight, 
+  Clock3, 
+  Copy, 
+  FileUp, 
+  LayoutDashboard, 
+  Plus, 
+  Search, 
+  Share2, 
+  Timer, 
+  Users, 
+  XCircle, 
+  Sun, 
+  Moon, 
+  User, 
+  LogOut, 
+  Edit3, 
+  ChevronDown,
+  ExternalLink
+} from 'lucide-react';
 import { supabase } from './supabaseClient';
 import './styles.css';
 
@@ -17,10 +40,17 @@ function parseCsv(text) {
     if (char === '"' && quoted && next === '"') { value += '"'; i++; }
     else if (char === '"') quoted = !quoted;
     else if (char === ',' && !quoted) { row.push(value.trim()); value = ''; }
-    else if ((char === '\n' || char === '\r') && !quoted) { if (char === '\r' && next === '\n') i++; row.push(value.trim()); if (row.some(Boolean)) rows.push(row); row = []; value = ''; }
+    else if ((char === '\n' || char === '\r') && !quoted) { 
+      if (char === '\r' && next === '\n') i++; 
+      row.push(value.trim()); 
+      if (row.some(Boolean)) rows.push(row); 
+      row = []; 
+      value = ''; 
+    }
     else value += char;
   }
-  row.push(value.trim()); if (row.some(Boolean)) rows.push(row);
+  row.push(value.trim()); 
+  if (row.some(Boolean)) rows.push(row);
   if (rows.length < 2) throw new Error('Add a header and at least one question.');
   const headers = rows[0].map(h => h.toLowerCase().replace(/^\uFEFF/, ''));
   const required = ['question','option_a','option_b','option_c','option_d','correct_option'];
@@ -34,6 +64,19 @@ function parseCsv(text) {
   });
 }
 
+function extractJoinCode() {
+  const hash = window.location.hash || '';
+  if (hash.startsWith('#join-')) return hash.replace('#join-', '').trim().toUpperCase();
+  if (hash.startsWith('#join/')) return hash.replace('#join/', '').trim().toUpperCase();
+  if (hash.startsWith('#/join/')) return hash.replace('#/join/', '').trim().toUpperCase();
+  
+  const search = new URLSearchParams(window.location.search);
+  const joinParam = search.get('join') || search.get('code');
+  if (joinParam) return joinParam.trim().toUpperCase();
+
+  return null;
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -41,12 +84,70 @@ function App() {
   const [attempts, setAttempts] = useState([]);
   const [page, setPage] = useState('home');
   const [activeTest, setActiveTest] = useState(null);
+  const [initialJoinCode, setInitialJoinCode] = useState('');
   const [toast, setToast] = useState('');
+  const [theme, setTheme] = useState(() => localStorage.getItem('evaluate_theme') || 'light');
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
-  const notify = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2600); };
-  const go = (target, test = null) => { setActiveTest(test); setPage(target); window.scrollTo(0,0); };
+  // Apply theme
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.body.classList.add('dark-theme');
+    } else {
+      document.body.classList.remove('dark-theme');
+    }
+    localStorage.setItem('evaluate_theme', theme);
+  }, [theme]);
 
-  // Fetch Session & Data
+  const toggleTheme = () => {
+    setTheme(t => (t === 'light' ? 'dark' : 'light'));
+  };
+
+  const notify = (msg) => { 
+    setToast(msg); 
+    setTimeout(() => setToast(''), 2800); 
+  };
+
+  const go = (target, test = null, addToHistory = true) => { 
+    setActiveTest(test); 
+    setPage(target); 
+    window.scrollTo(0,0); 
+    if (addToHistory) {
+      const path = target === 'home' ? '/' : `#${target}${test?.code ? '-' + test.code : ''}`;
+      window.history.pushState({ page: target, test }, '', path);
+    }
+  };
+
+  // Listen to popstate (browser back/forward buttons)
+  useEffect(() => {
+    const handlePopState = (e) => {
+      if (e.state?.page) {
+        setPage(e.state.page);
+        setActiveTest(e.state.test || null);
+      } else {
+        const joinCode = extractJoinCode();
+        if (joinCode) {
+          setInitialJoinCode(joinCode);
+          setPage('join');
+        } else {
+          setPage('home');
+        }
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Check URL on startup for direct join links (#join-CODE or ?join=CODE)
+  useEffect(() => {
+    const code = extractJoinCode();
+    if (code) {
+      setInitialJoinCode(code);
+      setPage('join');
+    }
+  }, []);
+
+  // Fetch Session
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
@@ -122,6 +223,7 @@ function App() {
 
   const addTest = async (test) => {
     try {
+      if (!user) throw new Error("Please log in to publish a test.");
       const { error: testErr } = await supabase.from('tests').insert({
         id: test.id,
         code: test.code,
@@ -165,7 +267,7 @@ function App() {
       const { error } = await supabase.from('attempts').insert({
         id: attempt.id,
         test_id: attempt.testId,
-        user_id: user.id,
+        user_id: user?.id,
         score: attempt.score,
         total: attempt.total,
         answers: attempt.answers,
@@ -178,9 +280,44 @@ function App() {
     }
   };
 
-  const context = { user, setUser, tests, attempts, go, addTest, saveAttempt, activeTest, notify, fetchData };
+  const handleUpdateName = async (newName) => {
+    try {
+      const { error } = await supabase.auth.updateUser({
+        data: { name: newName }
+      });
+      if (error) throw error;
+      setUser(u => ({ ...u, user_metadata: { ...u.user_metadata, name: newName } }));
+      notify('Profile updated!');
+      setIsEditModalOpen(false);
+    } catch (err) {
+      notify('Error updating profile: ' + err.message);
+    }
+  };
 
-  if (loading) return <div style={{ display: 'grid', placeItems: 'center', height: '100vh', fontFamily: 'DM Sans, sans-serif' }}>Loading Evalo...</div>;
+  const context = { 
+    user, 
+    setUser, 
+    tests, 
+    attempts, 
+    go, 
+    addTest, 
+    saveAttempt, 
+    activeTest, 
+    notify, 
+    fetchData,
+    initialJoinCode,
+    theme,
+    toggleTheme,
+    openEditModal: () => setIsEditModalOpen(true)
+  };
+
+  if (loading) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: '100vh', fontFamily: 'DM Sans, sans-serif' }}>
+        <h2>Loading Evaluate...</h2>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -195,32 +332,102 @@ function App() {
         {page === 'attempt' && <Attempt {...context} />}
         {page === 'result' && <Result {...context} />}
       </main>
+      
+      {isEditModalOpen && (
+        <EditProfileModal 
+          user={user} 
+          onSave={handleUpdateName} 
+          onClose={() => setIsEditModalOpen(false)} 
+        />
+      )}
+
       {toast && <div className="toast"><CheckCircle2 size={18}/>{toast}</div>}
     </>
   );
 }
 
-function Header({ user, go, notify }) {
-  const userName = user?.user_metadata?.name || user?.email || 'U';
+function Header({ user, go, notify, theme, toggleTheme, openEditModal }) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const menuRef = useRef(null);
+  
+  const userName = user?.user_metadata?.name || user?.email?.split('@')[0] || 'User';
+  const userEmail = user?.email || '';
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const signOut = async () => {
+    setDropdownOpen(false);
     await supabase.auth.signOut();
-    notify('Signed out');
+    notify('Signed out successfully');
     go('home');
   };
 
   return (
     <header>
-      <button className="brand" onClick={() => go('home')}><span>E</span>evalo</button>
+      <button className="brand" onClick={() => go('home')}>
+        <span>E</span>Evaluate
+      </button>
       <nav>
+        <button onClick={() => go(user ? 'dashboard' : 'auth')}>
+          <LayoutDashboard size={17}/>Dashboard
+        </button>
+
         {user ? (
           <>
-            <button onClick={() => go('dashboard')}><LayoutDashboard size={17}/>Dashboard</button>
-            <button className="new-test" onClick={() => go('create')}><Plus size={17}/>Create test</button>
-            <button className="avatar" onClick={signOut} title="Sign out">{userName[0].toUpperCase()}</button>
+            <button className="new-test" onClick={() => go('create')}>
+              <Plus size={17}/>Create test
+            </button>
+            <div className="profile-menu-container" ref={menuRef}>
+              <button 
+                className="avatar-btn" 
+                onClick={() => setDropdownOpen(!dropdownOpen)} 
+                title="Account menu"
+              >
+                {userName[0].toUpperCase()}
+              </button>
+
+              {dropdownOpen && (
+                <div className="dropdown-menu">
+                  <div className="dropdown-header">
+                    <strong>{userName}</strong>
+                    <span>{userEmail}</span>
+                  </div>
+                  <button className="dropdown-item" onClick={() => { setDropdownOpen(false); go('dashboard'); }}>
+                    <LayoutDashboard size={15}/> My Dashboard
+                  </button>
+                  <button className="dropdown-item" onClick={() => { setDropdownOpen(false); go('create'); }}>
+                    <Plus size={15}/> Create New Test
+                  </button>
+                  <button className="dropdown-item" onClick={() => { setDropdownOpen(false); openEditModal(); }}>
+                    <Edit3 size={15}/> Edit Display Name
+                  </button>
+                  <button className="dropdown-item" onClick={toggleTheme}>
+                    {theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} 
+                    {theme === 'dark' ? 'Light Theme' : 'Dark Theme'}
+                  </button>
+                  <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
+                  <button className="dropdown-item danger" onClick={signOut}>
+                    <LogOut size={15}/> Sign Out
+                  </button>
+                </div>
+              )}
+            </div>
           </>
         ) : (
           <>
-            <button onClick={() => go('join')}><Search size={17}/>Join a test</button>
+            <button onClick={() => go('join')}><Search size={17}/>Join test</button>
+            <button onClick={toggleTheme} title="Toggle theme">
+              {theme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}
+            </button>
             <button onClick={() => go('auth')}>Sign in</button>
             <button className="new-test" onClick={() => go('auth')}>Get started</button>
           </>
@@ -230,26 +437,82 @@ function Header({ user, go, notify }) {
   );
 }
 
+function EditProfileModal({ user, onSave, onClose }) {
+  const [name, setName] = useState(user?.user_metadata?.name || '');
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true);
+    onSave(name.trim());
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <h3>Edit Profile Name</h3>
+        <p>Update how your name appears to students and test creators.</p>
+        <form onSubmit={handleSubmit}>
+          <label style={{ display: 'grid', gap: 7, fontSize: 13, fontWeight: 600 }}>
+            Full Name
+            <input 
+              value={name} 
+              onChange={e => setName(e.target.value)} 
+              placeholder="Your Name" 
+              required 
+              autoFocus
+            />
+          </label>
+          <div className="modal-actions">
+            <button type="button" className="secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="primary" disabled={saving}>
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function Home({ user, go }) {
   const [code, setCode] = useState('');
+  
+  const handleJoinSubmit = (e) => {
+    e.preventDefault();
+    if (!code.trim()) return;
+    window.location.hash = `#join-${code.trim().toUpperCase()}`;
+    go('join');
+  };
+
   return (
     <section className="hero">
       <div className="eyebrow">ASSESSMENTS, SIMPLIFIED</div>
-      <h1>Tests that feel<br/><i>easy to run.</i></h1>
-      <p>Create polished MCQ assessments from a CSV file, share a simple code, and see every result in one place.</p>
+      <h1>Tests that feel<br/><i>effortless to run.</i></h1>
+      <p>Evaluate lets you create polished MCQ assessments from a CSV, share an instant link, and track live results in one clean dashboard.</p>
       <div className="hero-actions">
-        <button className="primary" onClick={() => go(user ? 'create' : 'auth')}>Create a test <ArrowRight size={18}/></button>
-        <button className="secondary" onClick={() => go('join')}>Join with a code</button>
+        <button className="primary" onClick={() => go(user ? 'create' : 'auth')}>
+          Create a test <ArrowRight size={18}/>
+        </button>
+        <button className="secondary" onClick={() => go('join')}>
+          Join with a code
+        </button>
       </div>
-      <div className="join-strip">
+      <form className="join-strip" onSubmit={handleJoinSubmit}>
         <span>Have a test code?</span>
-        <input value={code} onChange={e=>setCode(e.target.value.toUpperCase())} placeholder="e.g. 7KQ9" maxLength="6"/>
-        <button onClick={() => go('join')}>Continue <ChevronRight size={16}/></button>
-      </div>
+        <input 
+          value={code} 
+          onChange={e=>setCode(e.target.value.toUpperCase())} 
+          placeholder="7KQ9" 
+          maxLength="6"
+        />
+        <button type="submit">Continue <ChevronRight size={16}/></button>
+      </form>
       <div className="hero-stats">
         <div><strong>CSV import</strong><span>Upload questions in seconds</span></div>
-        <div><strong>Flexible timing</strong><span>Your test, your rules</span></div>
-        <div><strong>Clear results</strong><span>Learn from every answer</span></div>
+        <div><strong>Direct links</strong><span>One-click join for any student</span></div>
+        <div><strong>Clear results</strong><span>Instant scoring & review</span></div>
       </div>
     </section>
   );
@@ -276,7 +539,7 @@ function Auth({ go, notify }) {
         });
         if (error) throw error;
         if (!data.session) {
-          throw new Error('Please check your email to confirm your account, or disable "Confirm Email" in Supabase Auth settings.');
+          throw new Error('Account created! Please check your email or verify login.');
         }
         notify('Account created successfully!');
       } else {
@@ -295,9 +558,12 @@ function Auth({ go, notify }) {
   return (
     <section className="auth-wrap">
       <div className="auth-card">
-        <div className="eyebrow">YOUR EVALO ACCOUNT</div>
+        <button className="back-btn" onClick={() => go('home')}>
+          <ArrowLeft size={16}/> Back to Home
+        </button>
+        <div className="eyebrow">YOUR EVALUATE ACCOUNT</div>
         <h2>{isSignUp ? 'Start in one place.' : 'Welcome back.'}</h2>
-        <p>Create tests, join tests, and keep all your results together.</p>
+        <p>Create tests, join tests, and keep all your scores together.</p>
         <form onSubmit={submit}>
           {isSignUp && (
             <label>Full name
@@ -325,7 +591,7 @@ function Auth({ go, notify }) {
 
 function Dashboard({ user, tests, attempts, go }) {
   const [tab, setTab] = useState('hosted');
-  const userName = user?.user_metadata?.name || user?.email || 'User';
+  const userName = user?.user_metadata?.name || user?.email?.split('@')[0] || 'User';
   const cards = tab === 'hosted' ? tests : attempts;
 
   return (
@@ -360,11 +626,11 @@ function Dashboard({ user, tests, attempts, go }) {
                   <span className="tag">COMPLETED</span>
                   <span className="score">{a.score}/{a.total}</span>
                 </div>
-                <h3>{t?.title || 'Test'}</h3>
-                <p>{t?.subject || 'Assessment'}</p>
+                <h3>{t?.title || 'Assessment'}</h3>
+                <p>{t?.subject || 'General'} · {new Date(a.submittedAt).toLocaleDateString()}</p>
                 <div className="card-foot">
-                  <span>{new Date(a.submittedAt).toLocaleDateString()}</span>
-                  <button onClick={()=>go('result',{...a, test: t})}>Review <ArrowRight size={15}/></button>
+                  <span>Score: {Math.round(a.score / a.total * 100)}%</span>
+                  <button onClick={()=>go('result', a)}>Review answers <ArrowRight size={14}/></button>
                 </div>
               </div>
             );
@@ -377,18 +643,21 @@ function Dashboard({ user, tests, attempts, go }) {
 
 function TestCard({ test, attempts, onClick }) {
   const now = Date.now();
-  const status = test.startAt && now < new Date(test.startAt) ? 'SCHEDULED' : test.endAt && now > new Date(test.endAt) ? 'CLOSED' : 'LIVE';
+  let status = 'LIVE';
+  if (test.startAt && now < new Date(test.startAt)) status = 'SCHEDULED';
+  if (test.endAt && now > new Date(test.endAt)) status = 'CLOSED';
+
   return (
-    <div className="test-card" onClick={onClick}>
+    <div className="test-card" onClick={onClick} style={{ cursor: 'pointer' }}>
       <div className="test-card-top">
         <span className={'tag ' + status.toLowerCase()}>{status}</span>
-        <span className="muted">{attempts.length} attempts</span>
+        <span className="code-badge" style={{ fontFamily: 'DM Mono', fontWeight: 600 }}>{test.code}</span>
       </div>
       <h3>{test.title}</h3>
-      <p>{test.subject || 'General assessment'} · {test.questions.length} questions</p>
+      <p>{test.subject || 'Assessment'} · {test.questions.length} questions</p>
       <div className="card-foot">
-        <span>{test.timerMode === 'none' ? 'No timer' : test.timerMode === 'total' ? `${test.timerValue} min total` : `${test.timerValue}s / question`}</span>
-        <button>Manage <ArrowRight size={15}/></button>
+        <span>{attempts.length} attempts</span>
+        <button>Manage & Share <ArrowRight size={14}/></button>
       </div>
     </div>
   );
@@ -397,16 +666,43 @@ function TestCard({ test, attempts, onClick }) {
 function CreateTest({ addTest, go }) {
   const [step, setStep] = useState(1);
   const [questions, setQuestions] = useState([]);
-  const [error, setError] = useState('');
-  const [meta, setMeta] = useState({ title:'', subject:'', description:'', timerMode:'none', timerValue:'', startAt:'', endAt:'', attemptLimit:'1' });
+  const [meta, setMeta] = useState({
+    title: '',
+    subject: '',
+    description: '',
+    timerMode: 'none',
+    timerValue: 30,
+    attemptLimit: 1,
+    startAt: '',
+    endAt: ''
+  });
+  const [err, setErr] = useState('');
 
-  const upload = async e => {
+  const onFile = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    try { setQuestions(parseCsv(await file.text())); setError(''); }
-    catch (err) { setError(err.message); }
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const parsed = parseCsv(evt.target.result);
+        setQuestions(parsed);
+        setErr('');
+        setStep(2);
+      } catch (error) {
+        setErr(error.message);
+      }
+    };
+    reader.readAsText(file);
   };
-  const change = (k, v) => setMeta(m => ({...m, [k]: v}));
+
+  const loadSample = () => {
+    const parsed = parseCsv(SAMPLE_CSV);
+    setQuestions(parsed);
+    setMeta(m => ({ ...m, title: 'Database Fundamentals Quiz', subject: 'Computer Science' }));
+    setErr('');
+    setStep(2);
+  };
+
   const publish = () => {
     if (!meta.title || !questions.length) return;
     const test = { ...meta, id: uid(), code: uid().slice(0,4), questions };
@@ -414,90 +710,95 @@ function CreateTest({ addTest, go }) {
   };
 
   return (
-    <section className="app-shell">
-      <button className="back" onClick={()=>go('dashboard')}><ArrowLeft size={17}/>Dashboard</button>
-      <div className="page-title">
-        <div><div className="eyebrow">CREATE A NEW ASSESSMENT</div><h2>Build your test</h2></div>
-        <span className="step-label">Step {step} of 3</span>
-      </div>
+    <section className="app-shell narrow">
+      <button className="back-btn" onClick={() => step > 1 ? setStep(s => s - 1) : go('dashboard')}>
+        <ArrowLeft size={16}/> {step > 1 ? 'Back to previous step' : 'Back to Dashboard'}
+      </button>
+
       <div className="steps">
-        <span className={step>=1?'on':''}>1. Import questions</span>
-        <span className={step>=2?'on':''}>2. Details & rules</span>
-        <span className={step>=3?'on':''}>3. Review</span>
+        <span className={step===1?'on':''}>1. Upload questions</span>
+        <span className={step===2?'on':''}>2. Test settings</span>
+        <span className={step===3?'on':''}>3. Review & publish</span>
       </div>
-      {step===1 && (
-        <div className="panel upload-panel">
-          <FileUp size={34}/>
-          <h3>Upload your CSV file</h3>
-          <p>Use the fixed format: question, options A–D, correct option, and optional explanation.</p>
-          <label className="upload-btn">Choose CSV file<input type="file" accept=".csv,text/csv" onChange={upload}/></label>
-          <button className="text-btn" onClick={()=>{ try{setQuestions(parseCsv(SAMPLE_CSV));setError('');}catch{} }}>Load DBMS sample instead</button>
-          {error && <div className="error"><XCircle size={17}/>{error}</div>}
-          {questions.length > 0 && (
-            <div className="import-ok">
-              <CheckCircle2 size={20}/>
-              <strong>{questions.length} questions imported successfully</strong>
-              <button className="primary" onClick={()=>setStep(2)}>Continue <ArrowRight size={17}/></button>
-            </div>
-          )}
+
+      {step === 1 && (
+        <div className="upload-panel panel">
+          <FileUp size={44}/>
+          <h3>Upload questions CSV</h3>
+          <p>Download our format or drag-and-drop your prepared question bank.</p>
+          <label className="upload-btn">
+            Choose CSV file
+            <input type="file" accept=".csv" onChange={onFile}/>
+          </label>
+          <button className="text-btn" onClick={loadSample}>Or try sample questions</button>
+          {err && <div className="error"><XCircle size={17}/>{err}</div>}
         </div>
       )}
-      {step===2 && (
+
+      {step === 2 && (
         <div className="form-panel">
-          <div className="field-grid">
-            <label>Test title<input value={meta.title} onChange={e=>change('title',e.target.value)} placeholder="e.g. DBMS Unit 1 Test"/></label>
-            <label>Subject<input value={meta.subject} onChange={e=>change('subject',e.target.value)} placeholder="e.g. Database Management Systems"/></label>
-          </div>
-          <label>Description <textarea value={meta.description} onChange={e=>change('description',e.target.value)} placeholder="Brief instructions for students (optional)"/></label>
+          <h3>Test details & rules</h3>
+          <label>Title
+            <input value={meta.title} onChange={e=>setMeta({...meta, title:e.target.value})} placeholder="e.g. Midterm Assessment" required/>
+          </label>
+          <label>Subject (optional)
+            <input value={meta.subject} onChange={e=>setMeta({...meta, subject:e.target.value})} placeholder="e.g. Physics / Chapter 4"/>
+          </label>
+          <label>Instructions (optional)
+            <textarea value={meta.description} onChange={e=>setMeta({...meta, description:e.target.value})} placeholder="Guidelines for students..."/>
+          </label>
+
           <div className="rule-block">
-            <div><h3><Timer size={18}/>Timing</h3><p>Choose how students should be timed.</p></div>
+            <h3><Timer size={18}/> Timer mode</h3>
+            <p>Choose whether students have a total time limit or time per question.</p>
             <div className="choice-row">
-              {[['none','No timer'],['total','Full test timer'],['question','Per-question timer']].map(([v,l])=>(
-                <button className={meta.timerMode===v?'selected':''} onClick={()=>change('timerMode',v)} key={v}>{l}</button>
-              ))}
+              <button type="button" className={meta.timerMode==='none'?'selected':''} onClick={()=>setMeta({...meta, timerMode:'none'})}>No limit</button>
+              <button type="button" className={meta.timerMode==='total'?'selected':''} onClick={()=>setMeta({...meta, timerMode:'total', timerValue: 30})}>Total timer</button>
+              <button type="button" className={meta.timerMode==='question'?'selected':''} onClick={()=>setMeta({...meta, timerMode:'question', timerValue: 45})}>Per question</button>
             </div>
-            {meta.timerMode!=='none' && (
-              <label className="inline-field">{meta.timerMode==='total'?'Total duration (minutes)':'Time per question (seconds)'}
-                <input type="number" min="1" value={meta.timerValue} onChange={e=>change('timerValue',e.target.value)}/>
+            {meta.timerMode !== 'none' && (
+              <label className="inline-field">
+                {meta.timerMode==='total' ? 'Duration (minutes)' : 'Seconds per question'}
+                <input type="number" min="1" value={meta.timerValue} onChange={e=>setMeta({...meta, timerValue:e.target.value})}/>
               </label>
             )}
           </div>
+
           <div className="rule-block">
-            <div><h3><Clock3 size={18}/>Schedule</h3><p>Make it available now or at a chosen time.</p></div>
-            <div className="field-grid">
-              <label>Start date & time <input type="datetime-local" value={meta.startAt} onChange={e=>change('startAt',e.target.value)}/></label>
-              <label>End date & time <input type="datetime-local" value={meta.endAt} min={meta.startAt} onChange={e=>change('endAt',e.target.value)}/></label>
-            </div>
-          </div>
-          <div className="rule-block attempt-rule">
-            <div><h3><Users size={18}/>Allowed attempts</h3><p>Number of times each person can take this test.</p></div>
-            <label className="inline-field">Attempts per participant
-              <input type="number" min="1" max="20" value={meta.attemptLimit} onChange={e=>change('attemptLimit',e.target.value)}/>
+            <h3><Users size={18}/> Attempt limits</h3>
+            <label className="inline-field">
+              Allowed attempts per student
+              <input type="number" min="1" max="10" value={meta.attemptLimit} onChange={e=>setMeta({...meta, attemptLimit:e.target.value})}/>
             </label>
           </div>
+
           <div className="form-actions">
             <button className="secondary" onClick={()=>setStep(1)}>Back</button>
-            <button className="primary" disabled={!meta.title || (meta.timerMode!=='none'&&!meta.timerValue)} onClick={()=>setStep(3)}>Review test <ArrowRight size={17}/></button>
+            <button className="primary" disabled={!meta.title.trim()} onClick={()=>setStep(3)}>Continue to review <ArrowRight size={17}/></button>
           </div>
         </div>
       )}
-      {step===3 && (
+
+      {step === 3 && (
         <div className="review-panel">
           <div className="review-summary">
             <div>
-              <span className="eyebrow">READY TO PUBLISH</span>
+              <div className="eyebrow">READY TO PUBLISH</div>
               <h2>{meta.title}</h2>
-              <p>{meta.subject||'General assessment'} · {questions.length} questions · {meta.timerMode==='none'?'No timer':meta.timerMode==='total'?`${meta.timerValue} min total`:`${meta.timerValue}s per question`}</p>
+              <p>{questions.length} questions · {meta.timerMode==='none'?'No timer':meta.timerMode==='total'?`${meta.timerValue} min total`:`${meta.timerValue}s per question`} · {meta.attemptLimit} attempt limit</p>
             </div>
-            <CheckCircle2 size={42}/>
+            <CheckCircle2 size={34}/>
           </div>
           <div className="question-preview">
-            {questions.slice(0,3).map((q,i)=>(
-              <div key={q.id}><span>QUESTION {i+1}</span><p>{q.question}</p><small>Correct answer: {q.correct}</small></div>
+            {questions.map((q, i) => (
+              <div key={q.id}>
+                <span>QUESTION {i+1}</span>
+                <p><strong>{q.question}</strong></p>
+                <small>Answer: Option {q.correct}</small>
+              </div>
             ))}
-            {questions.length>3 && <p className="muted">+ {questions.length-3} more questions</p>}
           </div>
-          <div className="form-actions">
+          <div className="form-actions" style={{ padding: 20 }}>
             <button className="secondary" onClick={()=>setStep(2)}>Back</button>
             <button className="primary" onClick={publish}>Publish & get share link <Share2 size={17}/></button>
           </div>
@@ -514,51 +815,56 @@ function SharePage({ activeTest, go, notify, attempts }) {
 
   return (
     <section className="app-shell narrow">
+      <button className="back-btn" onClick={() => go('dashboard')}>
+        <ArrowLeft size={16}/> Back to Dashboard
+      </button>
+
       <div className="success-icon"><Check size={34}/></div>
       <div className="center">
         <div className="eyebrow">TEST PUBLISHED</div>
         <h2>{activeTest.title} is ready to share.</h2>
-        <p>Students need an account, then can join using your link or code.</p>
+        <p>Students can join instantly using your link or 4-digit code.</p>
       </div>
       <div className="share-card">
-        <label>Shareable link
+        <label>Direct shareable link
           <div className="copy-line">
             <code>{link}</code>
-            <button onClick={()=>{navigator.clipboard?.writeText(link);notify('Link copied');}}><Copy size={17}/></button>
+            <button onClick={()=>{navigator.clipboard?.writeText(link);notify('Direct link copied!');}}><Copy size={17}/></button>
           </div>
         </label>
         <div className="or">OR</div>
         <label>Join code
           <div className="code-box">
             {activeTest.code}
-            <button onClick={()=>{navigator.clipboard?.writeText(activeTest.code);notify('Code copied');}}><Copy size={17}/></button>
+            <button onClick={()=>{navigator.clipboard?.writeText(activeTest.code);notify('Code copied!');}}><Copy size={17}/></button>
           </div>
         </label>
       </div>
       <div className="share-actions">
         <button className="secondary" onClick={()=>go('dashboard')}>View dashboard</button>
-        <button className="primary" onClick={()=>go('join')}>Preview join flow <ArrowRight size={17}/></button>
+        <button className="primary" onClick={()=>{ window.location.hash = `#join-${activeTest.code}`; go('join'); }}>
+          Preview join flow <ArrowRight size={17}/>
+        </button>
       </div>
-      {attemptCount > 0 && <div className="muted center">{attemptCount} submitted attempts</div>}
+      {attemptCount > 0 && <div className="muted center" style={{ marginTop: 15 }}>{attemptCount} submitted attempt(s)</div>}
     </section>
   );
 }
 
-function Join({ user, attempts, go }) {
-  const [code, setCode] = useState('');
+function Join({ user, attempts, go, initialJoinCode }) {
+  const [code, setCode] = useState(() => initialJoinCode || extractJoinCode() || '');
   const [found, setFound] = useState(null);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const lookup = async e => {
-    e?.preventDefault();
-    if (!code.trim()) return;
+  const fetchTest = async (testCode) => {
+    if (!testCode.trim()) return;
     setErr('');
     setLoading(true);
     try {
-      const { data, error } = await supabase.from('tests').select('*, questions(*)').eq('code', code.trim().toUpperCase()).single();
+      const { data, error } = await supabase.from('tests').select('*, questions(*)').eq('code', testCode.trim().toUpperCase()).single();
       if (error || !data) {
-        setErr('We could not find a test with that code.');
+        setErr('We could not find an active test with that code.');
         setFound(null);
       } else {
         const formattedTest = {
@@ -585,6 +891,20 @@ function Join({ user, attempts, go }) {
     }
   };
 
+  // Automatically lookup if code is provided via URL
+  useEffect(() => {
+    const activeCode = initialJoinCode || extractJoinCode();
+    if (activeCode) {
+      setCode(activeCode);
+      fetchTest(activeCode);
+    }
+  }, [initialJoinCode]);
+
+  const lookup = async e => {
+    e?.preventDefault();
+    fetchTest(code);
+  };
+
   const join = async () => {
     if (!user) { go('auth'); return; }
     
@@ -592,7 +912,7 @@ function Join({ user, attempts, go }) {
     const { data: userAttempts } = await supabase.from('attempts').select('id').eq('test_id', found.id).eq('user_id', user.id);
     const count = userAttempts ? userAttempts.length : 0;
     if (count >= Number(found.attemptLimit)) {
-      setErr('You have used all allowed attempts for this test.');
+      setErr(`You have used all allowed attempts (${found.attemptLimit}) for this test.`);
       return;
     }
 
@@ -602,7 +922,7 @@ function Join({ user, attempts, go }) {
       return;
     }
     if (found.endAt && now > new Date(found.endAt)) {
-      setErr('This test is closed.');
+      setErr('This test has concluded.');
       return;
     }
     go('attempt', found);
@@ -611,21 +931,33 @@ function Join({ user, attempts, go }) {
   return (
     <section className="join-page">
       <div className="join-card">
+        <button className="back-btn" onClick={() => go('home')}>
+          <ArrowLeft size={16}/> Back to Home
+        </button>
         <div className="eyebrow">JOIN A TEST</div>
         <h2>Enter your code</h2>
-        <p>Your host may have shared a four-character join code with you.</p>
+        <p>Enter the 4-character test code or use your direct invite link.</p>
         <form onSubmit={lookup}>
-          <input className="code-input" value={code} onChange={e=>setCode(e.target.value.toUpperCase())} placeholder="7KQ9" maxLength="6" autoFocus/>
-          <button className="primary full" disabled={loading}>{loading ? 'Searching...' : 'Find test'} <ArrowRight size={17}/></button>
+          <input 
+            className="code-input" 
+            value={code} 
+            onChange={e=>setCode(e.target.value.toUpperCase())} 
+            placeholder="7KQ9" 
+            maxLength="6" 
+            autoFocus
+          />
+          <button className="primary full" disabled={loading}>
+            {loading ? 'Searching...' : 'Find test'} <ArrowRight size={17}/>
+          </button>
         </form>
         {err && <div className="error"><XCircle size={17}/>{err}</div>}
         {found && (
           <div className="found">
-            <span className="tag live">OPEN</span>
+            <span className="tag live">READY</span>
             <h3>{found.title}</h3>
             <p>{found.subject || 'Assessment'} · {found.questions.length} questions</p>
             <div className="facts">
-              <span><Clock3 size={15}/>{found.timerMode === 'none' ? 'No time limit' : found.timerMode === 'total' ? `${found.timerValue} minutes` : `${found.timerValue}s each`}</span>
+              <span><Clock3 size={15}/>{found.timerMode === 'none' ? 'No time limit' : found.timerMode === 'total' ? `${found.timerValue} min total` : `${found.timerValue}s / question`}</span>
               <span><Users size={15}/>{found.attemptLimit} attempt{Number(found.attemptLimit) > 1 ? 's' : ''}</span>
             </div>
             <button className="primary full" onClick={join}>Start test <ArrowRight size={17}/></button>
@@ -669,7 +1001,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
     const a = {
       id: uid(),
       testId: activeTest.id,
-      userId: user.id,
+      userId: user?.id,
       answers,
       score,
       total: activeTest.questions.length,
@@ -685,7 +1017,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
   return (
     <section className="attempt-shell">
       <div className="attempt-top">
-        <button className="brand mini"><span>E</span>evalo</button>
+        <button className="brand mini"><span>E</span>Evaluate</button>
         <div className="progress">
           <span>Question {idx+1} of {activeTest.questions.length}</span>
           <div><i style={{ width: `${((idx+1)/activeTest.questions.length)*100}%` }}/></div>
@@ -695,7 +1027,14 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
       <div className="attempt-body">
         <aside>
           {activeTest.questions.map((x, i) => (
-            <button key={x.id} className={(i===idx?'current ':'')+(answers[x.id]?'answered':'')} disabled={isPerQuestion && i < idx} onClick={() => { if (!isPerQuestion || i >= idx) setIdx(i); }}>{i+1}</button>
+            <button 
+              key={x.id} 
+              className={(i===idx?'current ':'')+(answers[x.id]?'answered':'')} 
+              disabled={isPerQuestion && i < idx} 
+              onClick={() => { if (!isPerQuestion || i >= idx) setIdx(i); }}
+            >
+              {i+1}
+            </button>
           ))}
         </aside>
         <article className="question-card">
@@ -731,11 +1070,14 @@ function Result({ activeTest, go }) {
   if (!test) return null;
   return (
     <section className="app-shell narrow">
+      <button className="back-btn" onClick={() => go('dashboard')}>
+        <ArrowLeft size={16}/> Back to Dashboard
+      </button>
       <div className="result-hero">
         <div className="eyebrow">TEST COMPLETED</div>
         <h2>{test.title}</h2>
         <div className="big-score">{attempt.score}<span>/{attempt.total}</span></div>
-        <p>{Math.round(attempt.score / attempt.total * 100)}% score · Review every answer below</p>
+        <p>{Math.round(attempt.score / attempt.total * 100)}% score · Review answers below</p>
       </div>
       <div className="review-list">
         {test.questions.map((q, i) => {

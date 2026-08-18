@@ -269,12 +269,15 @@ function Auth({ go, notify }) {
     setLoading(true);
     try {
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: { data: { name } }
         });
         if (error) throw error;
+        if (!data.session) {
+          throw new Error('Please check your email to confirm your account, or disable "Confirm Email" in Supabase Auth settings.');
+        }
         notify('Account created successfully!');
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -506,7 +509,7 @@ function CreateTest({ addTest, go }) {
 
 function SharePage({ activeTest, go, notify, attempts }) {
   if (!activeTest) return null;
-  const link = `evalo.app/join/${activeTest.code}`;
+  const link = `${window.location.origin}/#join-${activeTest.code}`;
   const attemptCount = attempts.filter(a => a.testId === activeTest.id).length;
 
   return (

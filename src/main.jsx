@@ -862,7 +862,7 @@ function Join({ user, attempts, go, initialJoinCode }) {
     setErr('');
     setLoading(true);
     try {
-      const { data, error } = await supabase.from('tests').select('*, questions(*)').eq('code', testCode.trim().toUpperCase()).single();
+      const { data, error } = await supabase.from('tests').select('*, questions(id, question, option_a, option_b, option_c, option_d)').eq('code', testCode.trim().toUpperCase()).single();
       if (error || !data) {
         setErr('We could not find an active test with that code.');
         setFound(null);
@@ -994,10 +994,22 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
   const q = activeTest.questions[idx];
   const select = (opt) => setAnswers(a => ({...a, [q.id]: opt}));
 
-  const submit = () => {
+  const submit = async () => {
     if (submitted) return;
     setSubmitted(true);
-    const score = activeTest.questions.reduce((n, x) => n + (answers[x.id] === x.correct ? 1 : 0), 0);
+    
+    // Securely fetch correct answers at the time of submission
+    const { data: answersData } = await supabase
+      .from('questions')
+      .select('id, correct_option, explanation')
+      .eq('test_id', activeTest.id);
+      
+    const fullQuestions = activeTest.questions.map(q => {
+      const match = answersData?.find(ans => ans.id === q.id);
+      return { ...q, correct: match?.correct_option, explanation: match?.explanation };
+    });
+
+    const score = fullQuestions.reduce((n, x) => n + (answers[x.id] === x.correct ? 1 : 0), 0);
     const a = {
       id: uid(),
       testId: activeTest.id,
@@ -1008,7 +1020,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
       submittedAt: new Date().toISOString()
     };
     saveAttempt(a);
-    go('result', { ...a, test: activeTest });
+    go('result', { ...a, test: { ...activeTest, questions: fullQuestions } });
   };
 
   const min = Math.floor(seconds / 60), sec = String(seconds % 60).padStart(2, '0');

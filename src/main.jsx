@@ -22,7 +22,8 @@ import {
   LogOut, 
   Edit3, 
   ChevronDown,
-  ExternalLink
+  ExternalLink,
+  Ban
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import './styles.css';
@@ -32,6 +33,18 @@ const SAMPLE_CSV = `question,option_a,option_b,option_c,option_d,correct_option,
 "Which SQL command removes a table definition?","DELETE","DROP","TRUNCATE","REMOVE","B","DROP removes a table definition."`;
 
 const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
+
+const toDatetimeLocal = (isoString) => {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  const ten = (i) => (i < 10 ? '0' : '') + i;
+  const YYYY = date.getFullYear();
+  const MM = ten(date.getMonth() + 1);
+  const DD = ten(date.getDate());
+  const HH = ten(date.getHours());
+  const MIN = ten(date.getMinutes());
+  return `${YYYY}-${MM}-${DD}T${HH}:${MIN}`;
+};
 
 function parseCsv(text) {
   const rows = []; let row = [], value = '', quoted = false;
@@ -82,6 +95,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [tests, setTests] = useState([]);
   const [attempts, setAttempts] = useState([]);
+  const [hostedAttempts, setHostedAttempts] = useState([]);
   const [page, setPage] = useState('home');
   const [activeTest, setActiveTest] = useState(null);
   const [initialJoinCode, setInitialJoinCode] = useState('');
@@ -186,6 +200,17 @@ function App() {
           }))
         }));
         setTests(formattedTests);
+
+        // Fetch Attempts for Hosted Tests
+        const hostedTestIds = formattedTests.map(t => t.id);
+        if (hostedTestIds.length > 0) {
+          const { data: hAttempts } = await supabase.from('attempts').select('*').in('test_id', hostedTestIds);
+          if (hAttempts) {
+            setHostedAttempts(hAttempts);
+          }
+        } else {
+          setHostedAttempts([]);
+        }
       }
 
       // Fetch Joined Attempts
@@ -218,7 +243,7 @@ function App() {
 
   useEffect(() => {
     if (user) fetchData();
-    else { setTests([]); setAttempts([]); }
+    else { setTests([]); setAttempts([]); setHostedAttempts([]); }
   }, [user]);
 
   const addTest = async (test) => {
@@ -235,7 +260,8 @@ function App() {
         timer_value: test.timerValue ? parseInt(test.timerValue) : null,
         start_at: test.startAt || null,
         end_at: test.endAt || null,
-        attempt_limit: parseInt(test.attemptLimit) || 1
+        attempt_limit: parseInt(test.attemptLimit) || 1,
+        host_name: user?.user_metadata?.name || user?.email?.split('@')[0] || 'Host'
       });
       if (testErr) throw testErr;
 
@@ -262,12 +288,40 @@ function App() {
     }
   };
 
+  const updateTest = async (testId, updates) => {
+    try {
+      const { error } = await supabase.from('tests').update(updates).eq('id', testId);
+      if (error) throw error;
+      notify('Test updated successfully!');
+      await fetchData();
+      if (activeTest && activeTest.id === testId) {
+        setActiveTest(prev => ({
+          ...prev,
+          ...updates,
+          timerMode: updates.timer_mode !== undefined ? updates.timer_mode : prev.timerMode,
+          timerValue: updates.timer_value !== undefined ? updates.timer_value : prev.timerValue,
+          startAt: updates.start_at !== undefined ? updates.start_at : prev.startAt,
+          endAt: updates.end_at !== undefined ? updates.end_at : prev.endAt,
+          attemptLimit: updates.attempt_limit !== undefined ? updates.attempt_limit : prev.attemptLimit,
+          code: updates.code !== undefined ? updates.code : prev.code,
+          title: updates.title !== undefined ? updates.title : prev.title,
+          subject: updates.subject !== undefined ? updates.subject : prev.subject,
+          description: updates.description !== undefined ? updates.description : prev.description
+        }));
+      }
+    } catch (err) {
+      notify('Error updating test: ' + err.message);
+    }
+  };
+
   const saveAttempt = async (attempt) => {
     try {
       const { error } = await supabase.from('attempts').insert({
         id: attempt.id,
         test_id: attempt.testId,
         user_id: user?.id,
+        user_name: user?.user_metadata?.name || user?.email?.split('@')[0] || 'Unknown',
+        user_email: user?.email || '',
         score: attempt.score,
         total: attempt.total,
         answers: attempt.answers,
@@ -299,8 +353,10 @@ function App() {
     setUser, 
     tests, 
     attempts, 
+    hostedAttempts,
     go, 
     addTest, 
+    updateTest,
     saveAttempt, 
     activeTest, 
     notify, 
@@ -592,7 +648,7 @@ function Auth({ go, notify }) {
   );
 }
 
-function Dashboard({ user, tests, attempts, go }) {
+function Dashboard({ user, tests, attempts, hostedAttempts, go }) {
   const [tab, setTab] = useState('hosted');
   const userName = user?.user_metadata?.name || user?.email?.split('@')[0] || 'User';
   const cards = tab === 'hosted' ? tests : attempts;
@@ -620,7 +676,7 @@ function Dashboard({ user, tests, attempts, go }) {
       ) : (
         <div className="test-grid">
           {tab === 'hosted' ? tests.map(t => (
-            <TestCard key={t.id} test={t} attempts={attempts.filter(a=>a.testId===t.id)} onClick={()=>go('share',t)}/>
+            <TestCard key={t.id} test={t} attempts={hostedAttempts.filter(a=>a.test_id===t.id)} onClick={()=>go('share',t)}/>
           )) : attempts.map(a => {
             const t = a.test;
             return (
@@ -630,7 +686,7 @@ function Dashboard({ user, tests, attempts, go }) {
                   <span className="score">{a.score}/{a.total}</span>
                 </div>
                 <h3>{t?.title || 'Assessment'}</h3>
-                <p>{t?.subject || 'General'} · {new Date(a.submittedAt).toLocaleDateString()}</p>
+                <p>by {t?.host_name || 'Unknown'} · {t?.subject || 'General'} · {new Date(a.submittedAt).toLocaleDateString()}</p>
                 <div className="card-foot">
                   <span>Score: {Math.round(a.score / a.total * 100)}%</span>
                   <button onClick={()=>go('result', a)}>Review answers <ArrowRight size={14}/></button>
@@ -811,10 +867,29 @@ function CreateTest({ addTest, go }) {
   );
 }
 
-function SharePage({ activeTest, go, notify, attempts }) {
+function SharePage({ activeTest, go, notify, hostedAttempts, updateTest }) {
+  const [showEditModal, setShowEditModal] = useState(false);
   if (!activeTest) return null;
+
+  const now = Date.now();
+  let status = 'LIVE';
+  if (activeTest.startAt && now < new Date(activeTest.startAt)) status = 'SCHEDULED';
+  if (activeTest.endAt && now > new Date(activeTest.endAt)) status = 'CLOSED';
+
   const link = `${window.location.origin}/#join-${activeTest.code}`;
-  const attemptCount = attempts.filter(a => a.testId === activeTest.id).length;
+  const testAttempts = (hostedAttempts || []).filter(a => a.test_id === activeTest.id);
+
+  const handleTerminate = async () => {
+    if (window.confirm("Are you sure you want to terminate this quiz immediately? This will close access and free up the join code for reuse.")) {
+      const originalCode = activeTest.code;
+      const uniqueSuffix = `_ended_${Math.random().toString(36).slice(2, 6)}`;
+      await updateTest(activeTest.id, {
+        end_at: new Date().toISOString(),
+        code: `${originalCode}${uniqueSuffix}`
+      });
+      notify("Quiz terminated successfully!");
+    }
+  };
 
   return (
     <section className="app-shell narrow">
@@ -822,35 +897,199 @@ function SharePage({ activeTest, go, notify, attempts }) {
         <ArrowLeft size={16}/> Back to Dashboard
       </button>
 
-      <div className="success-icon"><Check size={34}/></div>
-      <div className="center">
-        <div className="eyebrow">TEST PUBLISHED</div>
-        <h2>{activeTest.title} is ready to share.</h2>
-        <p>Students can join instantly using your link or 4-digit code.</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
+        <span className={`tag ${status.toLowerCase()}`}>{status}</span>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="secondary mini-btn" onClick={() => setShowEditModal(true)}>
+            Edit Parameters
+          </button>
+          {status !== 'CLOSED' && (
+            <button className="secondary danger mini-btn" onClick={handleTerminate}>
+              <Ban size={14} style={{ marginRight: '4px' }}/> Terminate Quiz
+            </button>
+          )}
+        </div>
       </div>
-      <div className="share-card">
-        <label>Direct shareable link
-          <div className="copy-line">
-            <code>{link}</code>
-            <button onClick={()=>{navigator.clipboard?.writeText(link);notify('Direct link copied!');}}><Copy size={17}/></button>
+
+      <div className="center" style={{ marginTop: '20px' }}>
+        <div className="eyebrow">TEST MANAGEMENT</div>
+        <h2>{activeTest.title}</h2>
+        <p>{activeTest.subject || 'General Assessment'} · {activeTest.questions?.length || 0} questions</p>
+      </div>
+
+      {status !== 'CLOSED' ? (
+        <div className="share-card">
+          <label>Direct shareable link
+            <div className="copy-line">
+              <code>{link}</code>
+              <button onClick={()=>{navigator.clipboard?.writeText(link);notify('Direct link copied!');}}><Copy size={17}/></button>
+            </div>
+          </label>
+          <div className="or">OR</div>
+          <label>Join code
+            <div className="code-box">
+              {activeTest.code}
+              <button onClick={()=>{navigator.clipboard?.writeText(activeTest.code);notify('Code copied!');}}><Copy size={17}/></button>
+            </div>
+          </label>
+        </div>
+      ) : (
+        <div className="share-card" style={{ background: 'var(--surface)', borderStyle: 'dashed', textAlign: 'center', padding: '30px' }}>
+          <Ban size={30} style={{ color: 'var(--text-muted)', marginBottom: '8px' }}/>
+          <h4 style={{ margin: '0 0 4px 0' }}>Quiz has concluded</h4>
+          <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)' }}>This test code and join link are no longer active.</p>
+        </div>
+      )}
+
+      {/* Student Results List */}
+      <div style={{ marginTop: '40px' }}>
+        <h3 style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '15px' }}>
+          Student Attempts ({testAttempts.length})
+        </h3>
+        {testAttempts.length === 0 ? (
+          <div className="empty" style={{ padding: '30px 15px', minHeight: 'auto' }}>
+            <p>No student attempts recorded yet.</p>
           </div>
-        </label>
-        <div className="or">OR</div>
-        <label>Join code
-          <div className="code-box">
-            {activeTest.code}
-            <button onClick={()=>{navigator.clipboard?.writeText(activeTest.code);notify('Code copied!');}}><Copy size={17}/></button>
+        ) : (
+          <div style={{ display: 'grid', gap: '10px' }}>
+            {testAttempts.map(a => (
+              <div key={a.id} style={{
+                background: 'var(--card-bg)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '8px',
+                padding: '12px 16px',
+                display: 'flex',
+                justify-content: 'space-between',
+                alignItems: 'center',
+                boxShadow: 'var(--shadow)'
+              }}>
+                <div>
+                  <strong style={{ display: 'block', fontSize: '15px' }}>{a.user_name}</strong>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    {a.user_email} · {new Date(a.submitted_at).toLocaleString()}
+                  </span>
+                </div>
+                <div style={{
+                  fontSize: '18px',
+                  fontWeight: '700',
+                  color: 'var(--brand-primary)',
+                  background: 'var(--brand-light)',
+                  padding: '4px 12px',
+                  borderRadius: '6px'
+                }}>
+                  {a.score}/{a.total}
+                </div>
+              </div>
+            ))}
           </div>
-        </label>
+        )}
       </div>
-      <div className="share-actions">
-        <button className="secondary" onClick={()=>go('dashboard')}>View dashboard</button>
-        <button className="primary" onClick={()=>{ window.location.hash = `#join-${activeTest.code}`; go('join'); }}>
-          Preview join flow <ArrowRight size={17}/>
-        </button>
-      </div>
-      {attemptCount > 0 && <div className="muted center" style={{ marginTop: 15 }}>{attemptCount} submitted attempt(s)</div>}
+
+      {showEditModal && (
+        <EditTestModal 
+          test={activeTest} 
+          onSave={async (updates) => {
+            await updateTest(activeTest.id, updates);
+            setShowEditModal(false);
+          }}
+          onClose={() => setShowEditModal(false)}
+        />
+      )}
     </section>
+  );
+}
+
+function EditTestModal({ test, onSave, onClose }) {
+  const [title, setTitle] = useState(test.title || '');
+  const [subject, setSubject] = useState(test.subject || '');
+  const [description, setDescription] = useState(test.description || '');
+  const [timerMode, setTimerMode] = useState(test.timerMode || 'none');
+  const [timerValue, setTimerValue] = useState(test.timerValue || 30);
+  const [attemptLimit, setAttemptLimit] = useState(test.attemptLimit || 1);
+  const [startAt, setStartAt] = useState(() => toDatetimeLocal(test.startAt));
+  const [endAt, setEndAt] = useState(() => toDatetimeLocal(test.endAt));
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!title.trim()) return;
+    setSaving(true);
+    await onSave({
+      title: title.trim(),
+      subject: subject.trim(),
+      description: description.trim(),
+      timer_mode: timerMode,
+      timer_value: timerMode !== 'none' ? parseInt(timerValue) : null,
+      attempt_limit: parseInt(attemptLimit) || 1,
+      start_at: startAt ? new Date(startAt).toISOString() : null,
+      end_at: endAt ? new Date(endAt).toISOString() : null
+    });
+    setSaving(false);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '500px', width: '90%' }}>
+        <h3>Edit Quiz Parameters</h3>
+        <p>Updates will be applied instantly to active attempts.</p>
+        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '15px' }}>
+          <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 600 }}>
+            Title
+            <input value={title} onChange={e => setTitle(e.target.value)} required />
+          </label>
+          <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 600 }}>
+            Subject (optional)
+            <input value={subject} onChange={e => setSubject(e.target.value)} />
+          </label>
+          <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 600 }}>
+            Instructions (optional)
+            <textarea value={description} onChange={e => setDescription(e.target.value)} style={{ height: '60px' }} />
+          </label>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 600 }}>
+              Timer Mode
+              <select value={timerMode} onChange={e => setTimerMode(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid var(--border-subtle)', background: 'var(--input-bg)', color: 'var(--text-main)' }}>
+                <option value="none">No limit</option>
+                <option value="total">Total timer</option>
+                <option value="question">Per question</option>
+              </select>
+            </label>
+            {timerMode !== 'none' && (
+              <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 600 }}>
+                {timerMode === 'total' ? 'Duration (mins)' : 'Seconds / Question'}
+                <input type="number" min="1" value={timerValue} onChange={e => setTimerValue(e.target.value)} required />
+              </label>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 600 }}>
+              Attempt Limit
+              <input type="number" min="1" max="10" value={attemptLimit} onChange={e => setAttemptLimit(e.target.value)} required />
+            </label>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 600 }}>
+              Start Time (optional)
+              <input type="datetime-local" value={startAt} onChange={e => setStartAt(e.target.value)} />
+            </label>
+            <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 600 }}>
+              End Time (optional)
+              <input type="datetime-local" value={endAt} onChange={e => setEndAt(e.target.value)} />
+            </label>
+          </div>
+
+          <div className="modal-actions" style={{ marginTop: '10px' }}>
+            <button type="button" className="secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="primary" disabled={saving}>
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -958,7 +1197,7 @@ function Join({ user, attempts, go, initialJoinCode }) {
           <div className="found">
             <span className="tag live">READY</span>
             <h3>{found.title}</h3>
-            <p>{found.subject || 'Assessment'} · {found.questions.length} questions</p>
+            <p>by {found.host_name || 'Unknown'} · {found.subject || 'Assessment'} · {found.questions.length} questions</p>
             <div className="facts">
               <span><Clock3 size={15}/>{found.timerMode === 'none' ? 'No time limit' : found.timerMode === 'total' ? `${found.timerValue} min total` : `${found.timerValue}s / question`}</span>
               <span><Users size={15}/>{found.attemptLimit} attempt{Number(found.attemptLimit) > 1 ? 's' : ''}</span>
@@ -976,7 +1215,13 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
   const [answers, setAnswers] = useState({});
   const [marked, setMarked] = useState({});
   const [seconds, setSeconds] = useState(() => activeTest?.timerMode === 'total' ? Number(activeTest.timerValue) * 60 : activeTest?.timerMode === 'question' ? Number(activeTest.timerValue) : 0);
+  const [localTimerValue, setLocalTimerValue] = useState(activeTest?.timerValue);
   const [submitted, setSubmitted] = useState(false);
+
+  const answersRef = useRef(answers);
+  useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
 
   useEffect(() => {
     if (!activeTest || activeTest.timerMode === 'none' || submitted) return;
@@ -993,6 +1238,40 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
       } else submit();
     }
   }, [seconds]);
+
+  // Poll for live parameter updates (Termination & Timer Extension)
+  useEffect(() => {
+    if (!activeTest || submitted) return;
+    const pollId = setInterval(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('tests')
+          .select('end_at, timer_value, timer_mode')
+          .eq('id', activeTest.id)
+          .single();
+        if (error || !data) return;
+
+        // 1. Force termination if end_at is reached or set to past
+        const now = new Date();
+        if (data.end_at && now > new Date(data.end_at)) {
+          clearInterval(pollId);
+          alert('This test has been terminated by the host.');
+          submit();
+          return;
+        }
+
+        // 2. Timer extension update (for total timer)
+        if (data.timer_mode === 'total' && data.timer_value !== localTimerValue) {
+          const diffInSeconds = (Number(data.timer_value) - Number(localTimerValue)) * 60;
+          setSeconds(s => Math.max(0, s + diffInSeconds));
+          setLocalTimerValue(data.timer_value);
+        }
+      } catch (err) {
+        console.error('Error fetching live updates:', err);
+      }
+    }, 5000);
+    return () => clearInterval(pollId);
+  }, [activeTest, submitted, localTimerValue]);
 
   if (!activeTest) return null;
   const q = activeTest.questions[idx];
@@ -1015,12 +1294,12 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
       return { ...q, correct: match?.correct_option, explanation: match?.explanation };
     });
 
-    const score = fullQuestions.reduce((n, x) => n + (answers[x.id] === x.correct ? 1 : 0), 0);
+    const score = fullQuestions.reduce((n, x) => n + (answersRef.current[x.id] === x.correct ? 1 : 0), 0);
     const a = {
       id: uid(),
       testId: activeTest.id,
       userId: user?.id,
-      answers,
+      answers: answersRef.current,
       score,
       total: activeTest.questions.length,
       submittedAt: new Date().toISOString()

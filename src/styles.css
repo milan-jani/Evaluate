@@ -829,3 +829,37 @@ body.dark-theme .error { background: #321917; color: #ff8e85; }
   .question-card { padding: 22px 16px; }
   .auth-card, .join-card { padding: 24px 18px; }
 }
+/* Result Options Icons */
+.review-option {
+  position: relative;
+}
+.status-icon {
+  margin-left: auto;
+}
+.correct-icon {
+  color: #39865e;
+}
+.wrong-icon {
+  color: #bb5b51;
+}
+
+/* Attempt Marked Styles */
+.attempt-body aside button.marked {
+  border: 2px solid #eab308;
+  position: relative;
+}
+.attempt-body aside button.marked::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  background-color: #eab308;
+  border-radius: 50%;
+}
+.marked-btn {
+  background-color: rgba(234, 179, 8, 0.15) !important;
+  color: #ca8a04 !important;
+  border-color: #ca8a04 !important;
+}

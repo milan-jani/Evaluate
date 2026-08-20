@@ -383,6 +383,9 @@ function Header({ user, go, notify, theme, toggleTheme, openEditModal }) {
 
         {user ? (
           <>
+            <button onClick={() => go('join')} style={{ marginRight: '8px' }}>
+              <Search size={17}/>Join test
+            </button>
             <button className="new-test" onClick={() => go('create')}>
               <Plus size={17}/>Create test
             </button>
@@ -971,6 +974,7 @@ function Join({ user, attempts, go, initialJoinCode }) {
 function Attempt({ activeTest, user, saveAttempt, go }) {
   const [idx, setIdx] = useState(0);
   const [answers, setAnswers] = useState({});
+  const [marked, setMarked] = useState({});
   const [seconds, setSeconds] = useState(() => activeTest?.timerMode === 'total' ? Number(activeTest.timerValue) * 60 : activeTest?.timerMode === 'question' ? Number(activeTest.timerValue) : 0);
   const [submitted, setSubmitted] = useState(false);
 
@@ -993,6 +997,8 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
   if (!activeTest) return null;
   const q = activeTest.questions[idx];
   const select = (opt) => setAnswers(a => ({...a, [q.id]: opt}));
+  const toggleMark = () => setMarked(m => ({ ...m, [q.id]: !m[q.id] }));
+  const clearSelection = () => setAnswers(a => { const newA = { ...a }; delete newA[q.id]; return newA; });
 
   const submit = async () => {
     if (submitted) return;
@@ -1041,7 +1047,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
           {activeTest.questions.map((x, i) => (
             <button 
               key={x.id} 
-              className={(i===idx?'current ':'')+(answers[x.id]?'answered':'')} 
+              className={(i===idx?'current ':'')+(answers[x.id]?'answered ':'')+(marked[x.id]?'marked':'')} 
               disabled={isPerQuestion && i < idx} 
               onClick={() => { if (!isPerQuestion || i >= idx) setIdx(i); }}
             >
@@ -1063,8 +1069,16 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
             })}
           </div>
           <div className="question-actions">
-            {!isPerQuestion && <button className="secondary" disabled={idx === 0} onClick={() => setIdx(i => i - 1)}><ArrowLeft size={17}/>Previous</button>}
-            <span/>
+            {!isPerQuestion && (
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className="secondary" disabled={idx === 0} onClick={() => setIdx(i => i - 1)}><ArrowLeft size={17}/>Previous</button>
+                <button className={`secondary ${marked[q.id] ? 'marked-btn' : ''}`} onClick={toggleMark}>
+                  {marked[q.id] ? 'Unmark' : 'Mark for Review'}
+                </button>
+                {answers[q.id] && <button className="secondary" onClick={clearSelection}>Clear</button>}
+              </div>
+            )}
+            {isPerQuestion && <span/>}
             {idx === activeTest.questions.length - 1 ? (
               <button className="primary" onClick={submit}>Submit test <Check size={17}/></button>
             ) : (
@@ -1107,11 +1121,11 @@ function Result({ activeTest, go }) {
                   const letter = 'ABCD'[optionIndex], selected = answer === letter, isCorrect = letter === q.correct;
                   const state = correct && selected ? 'right' : !correct && selected ? 'wrong-answer' : !correct && isCorrect ? 'right' : '';
                   return (
-                    <div className={state} key={letter}>
+                    <div className={`review-option ${state}`} key={letter}>
                       <b>{letter}</b><span>{option}</span>
-                      {selected && <em>Your answer</em>}
-                      {!correct && isCorrect && <em>Correct answer</em>}
-                      {correct && selected && <Check size={17}/>}
+                      {selected && correct && <Check size={18} className="status-icon correct-icon" />}
+                      {selected && !correct && <XCircle size={18} className="status-icon wrong-icon" />}
+                      {!selected && isCorrect && <Check size={18} className="status-icon correct-icon" />}
                     </div>
                   );
                 })}

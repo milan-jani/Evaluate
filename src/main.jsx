@@ -959,7 +959,7 @@ function SharePage({ activeTest, go, notify, hostedAttempts, updateTest }) {
                 borderRadius: '8px',
                 padding: '12px 16px',
                 display: 'flex',
-                justify-content: 'space-between',
+                justifyContent: 'space-between',
                 alignItems: 'center',
                 boxShadow: 'var(--shadow)'
               }}>

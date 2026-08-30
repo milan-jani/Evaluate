@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { 
   ArrowLeft, 
@@ -22,6 +22,8 @@ import {
   LogOut, 
   Edit3, 
   ChevronDown,
+  ChevronUp,
+  RotateCcw,
   ExternalLink,
   Ban
 } from 'lucide-react';
@@ -186,6 +188,7 @@ function App() {
           ...t,
           timerMode: t.timer_mode,
           timerValue: t.timer_value,
+          feedbackMode: t.feedback_mode || 'end',
           startAt: t.start_at,
           endAt: t.end_at,
           attemptLimit: t.attempt_limit,
@@ -199,6 +202,8 @@ function App() {
             explanation: q.explanation
           }))
         }));
+        // Sort newest tests first (descending by created_at)
+        formattedTests.sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0));
         setTests(formattedTests);
 
         // Fetch Attempts for Hosted Tests
@@ -206,6 +211,7 @@ function App() {
         if (hostedTestIds.length > 0) {
           const { data: hAttempts } = await supabase.from('attempts').select('*').in('test_id', hostedTestIds);
           if (hAttempts) {
+            hAttempts.sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0));
             setHostedAttempts(hAttempts);
           }
         } else {
@@ -225,6 +231,10 @@ function App() {
             ...a.tests,
             timerMode: a.tests.timer_mode,
             timerValue: a.tests.timer_value,
+            feedbackMode: a.tests.feedback_mode || 'end',
+            startAt: a.tests.start_at,
+            endAt: a.tests.end_at,
+            attemptLimit: a.tests.attempt_limit,
             questions: (a.tests.questions || []).map(q => ({
               id: q.id,
               question: q.question,
@@ -234,6 +244,8 @@ function App() {
             }))
           } : null
         }));
+        // Sort attempts newest first
+        formattedAttempts.sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
         setAttempts(formattedAttempts);
       }
     } catch (err) {
@@ -258,6 +270,7 @@ function App() {
         description: test.description,
         timer_mode: test.timerMode,
         timer_value: test.timerValue ? parseInt(test.timerValue) : null,
+        feedback_mode: test.feedbackMode || 'end',
         start_at: test.startAt || null,
         end_at: test.endAt || null,
         attempt_limit: parseInt(test.attemptLimit) || 1,
@@ -300,6 +313,7 @@ function App() {
           ...updates,
           timerMode: updates.timer_mode !== undefined ? updates.timer_mode : prev.timerMode,
           timerValue: updates.timer_value !== undefined ? updates.timer_value : prev.timerValue,
+          feedbackMode: updates.feedback_mode !== undefined ? updates.feedback_mode : prev.feedbackMode,
           startAt: updates.start_at !== undefined ? updates.start_at : prev.startAt,
           endAt: updates.end_at !== undefined ? updates.end_at : prev.endAt,
           attemptLimit: updates.attempt_limit !== undefined ? updates.attempt_limit : prev.attemptLimit,
@@ -651,7 +665,29 @@ function Auth({ go, notify }) {
 function Dashboard({ user, tests, attempts, hostedAttempts, go }) {
   const [tab, setTab] = useState('hosted');
   const userName = user?.user_metadata?.name || user?.email?.split('@')[0] || 'User';
-  const cards = tab === 'hosted' ? tests : attempts;
+
+  // Group user attempts by testId for Joined Tests tab
+  const joinedTestGroups = useMemo(() => {
+    const groups = {};
+    attempts.forEach(a => {
+      if (!a.testId) return;
+      if (!groups[a.testId]) {
+        groups[a.testId] = {
+          testId: a.testId,
+          test: a.test,
+          attempts: []
+        };
+      }
+      groups[a.testId].attempts.push(a);
+    });
+    return Object.values(groups).sort((a, b) => {
+      const dateA = new Date(a.attempts[0]?.submittedAt || 0);
+      const dateB = new Date(b.attempts[0]?.submittedAt || 0);
+      return dateB - dateA;
+    });
+  }, [attempts]);
+
+  const cardsCount = tab === 'hosted' ? tests.length : joinedTestGroups.length;
 
   return (
     <section className="app-shell">
@@ -664,9 +700,9 @@ function Dashboard({ user, tests, attempts, hostedAttempts, go }) {
       </div>
       <div className="tabs">
         <button className={tab==='hosted'?'active':''} onClick={()=>setTab('hosted')}>My hosted tests <b>{tests.length}</b></button>
-        <button className={tab==='joined'?'active':''} onClick={()=>setTab('joined')}>My joined tests <b>{attempts.length}</b></button>
+        <button className={tab==='joined'?'active':''} onClick={()=>setTab('joined')}>My joined tests <b>{joinedTestGroups.length}</b></button>
       </div>
-      {cards.length === 0 ? (
+      {cardsCount === 0 ? (
         <div className="empty">
           <FileUp size={34}/>
           <h3>{tab === 'hosted' ? 'Create your first test' : 'No joined tests yet'}</h3>
@@ -677,26 +713,78 @@ function Dashboard({ user, tests, attempts, hostedAttempts, go }) {
         <div className="test-grid">
           {tab === 'hosted' ? tests.map(t => (
             <TestCard key={t.id} test={t} attempts={hostedAttempts.filter(a=>a.test_id===t.id)} onClick={()=>go('share',t)}/>
-          )) : attempts.map(a => {
-            const t = a.test;
-            return (
-              <div className="test-card" key={a.id}>
-                <div className="test-card-top">
-                  <span className="tag">COMPLETED</span>
-                  <span className="score">{a.score}/{a.total}</span>
-                </div>
-                <h3>{t?.title || 'Assessment'}</h3>
-                <p>by {t?.host_name || 'Unknown'} · {t?.subject || 'General'} · {new Date(a.submittedAt).toLocaleDateString()}</p>
-                <div className="card-foot">
-                  <span>Score: {Math.round(a.score / a.total * 100)}%</span>
-                  <button onClick={()=>go('result', a)}>Review answers <ArrowRight size={14}/></button>
-                </div>
-              </div>
-            );
-          })}
+          )) : joinedTestGroups.map(group => (
+            <JoinedTestCard key={group.testId} group={group} go={go} />
+          ))}
         </div>
       )}
     </section>
+  );
+}
+
+function JoinedTestCard({ group, go }) {
+  const [showHistory, setShowHistory] = useState(false);
+  const test = group.test;
+  const attemptsList = group.attempts; // sorted newest first
+  const bestScoreAttempt = attemptsList.reduce((max, curr) => (curr.score > (max?.score || 0) ? curr : max), attemptsList[0]);
+  const highestScore = bestScoreAttempt ? bestScoreAttempt.score : 0;
+  const totalQuestions = bestScoreAttempt ? bestScoreAttempt.total : 0;
+  const attemptLimit = Number(test?.attemptLimit) || 1;
+  const now = Date.now();
+  const isClosed = test?.endAt && now > new Date(test.endAt);
+  const canReattempt = !isClosed && attemptsList.length < attemptLimit;
+
+  return (
+    <div className="test-card">
+      <div className="test-card-top">
+        <span className="tag">JOINED</span>
+        <span className="score" style={{ color: 'var(--brand-primary)', fontSize: '15px' }}>
+          Best: {highestScore}/{totalQuestions}
+        </span>
+      </div>
+      <h3>{test?.title || 'Assessment'}</h3>
+      <p>by {test?.host_name || 'Host'} · {test?.subject || 'General'} · {new Date(attemptsList[0]?.submittedAt).toLocaleDateString()}</p>
+      
+      <div style={{ margin: '12px 0 6px 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+        <span>{attemptsList.length} of {attemptLimit} attempt(s) used</span>
+      </div>
+
+      <div className="card-foot" style={{ marginTop: '12px', flexWrap: 'wrap', gap: '8px' }}>
+        {canReattempt ? (
+          <button className="primary" style={{ padding: '6px 12px', fontSize: '12px' }} onClick={() => go('attempt', test)}>
+            <RotateCcw size={14} /> Re-attempt Test
+          </button>
+        ) : (
+          <button className="secondary" style={{ padding: '6px 12px', fontSize: '12px' }} onClick={() => go('result', attemptsList[0])}>
+            Review latest <ArrowRight size={14}/>
+          </button>
+        )}
+
+        {attemptsList.length > 1 && (
+          <button className="history-toggle-btn" onClick={() => setShowHistory(!showHistory)}>
+            History ({attemptsList.length}) {showHistory ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+          </button>
+        )}
+      </div>
+
+      {showHistory && (
+        <div className="history-list">
+          {attemptsList.map((att, idx) => (
+            <div key={att.id} className="history-item">
+              <div>
+                <strong>Attempt #{attemptsList.length - idx}</strong>: {att.score}/{att.total}
+                <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)' }}>
+                  {new Date(att.submittedAt).toLocaleString()}
+                </span>
+              </div>
+              <button className="secondary" style={{ padding: '3px 8px', fontSize: '11px' }} onClick={() => go('result', att)}>
+                Review
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -731,6 +819,7 @@ function CreateTest({ addTest, go }) {
     description: '',
     timerMode: 'none',
     timerValue: 30,
+    feedbackMode: 'end',
     attemptLimit: 1,
     startAt: '',
     endAt: ''
@@ -821,6 +910,15 @@ function CreateTest({ addTest, go }) {
                 <input type="number" min="1" value={meta.timerValue} onChange={e=>setMeta({...meta, timerValue:e.target.value})}/>
               </label>
             )}
+          </div>
+
+          <div className="rule-block">
+            <h3><CheckCircle2 size={18}/> Answer Feedback</h3>
+            <p>Choose when students get to see the correct answer and explanations.</p>
+            <div className="choice-row">
+              <button type="button" className={meta.feedbackMode==='end'?'selected':''} onClick={()=>setMeta({...meta, feedbackMode:'end'})}>Show at end</button>
+              <button type="button" className={meta.feedbackMode==='instant'?'selected':''} onClick={()=>setMeta({...meta, feedbackMode:'instant'})}>Instant feedback</button>
+            </div>
           </div>
 
           <div className="rule-block">
@@ -1005,6 +1103,7 @@ function EditTestModal({ test, onSave, onClose }) {
   const [description, setDescription] = useState(test.description || '');
   const [timerMode, setTimerMode] = useState(test.timerMode || 'none');
   const [timerValue, setTimerValue] = useState(test.timerValue || 30);
+  const [feedbackMode, setFeedbackMode] = useState(test.feedbackMode || 'end');
   const [attemptLimit, setAttemptLimit] = useState(test.attemptLimit || 1);
   const [startAt, setStartAt] = useState(() => toDatetimeLocal(test.startAt));
   const [endAt, setEndAt] = useState(() => toDatetimeLocal(test.endAt));
@@ -1020,6 +1119,7 @@ function EditTestModal({ test, onSave, onClose }) {
       description: description.trim(),
       timer_mode: timerMode,
       timer_value: timerMode !== 'none' ? parseInt(timerValue) : null,
+      feedback_mode: feedbackMode,
       attempt_limit: parseInt(attemptLimit) || 1,
       start_at: startAt ? new Date(startAt).toISOString() : null,
       end_at: endAt ? new Date(endAt).toISOString() : null
@@ -1067,6 +1167,13 @@ function EditTestModal({ test, onSave, onClose }) {
             <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 600 }}>
               Attempt Limit
               <input type="number" min="1" max="10" value={attemptLimit} onChange={e => setAttemptLimit(e.target.value)} required />
+            </label>
+            <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 600 }}>
+              Answer Feedback
+              <select value={feedbackMode} onChange={e => setFeedbackMode(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid var(--border-subtle)', background: 'var(--input-bg)', color: 'var(--text-main)' }}>
+                <option value="end">Show at end</option>
+                <option value="instant">Instant feedback</option>
+              </select>
             </label>
           </div>
 
@@ -1217,6 +1324,30 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
   const [seconds, setSeconds] = useState(() => activeTest?.timerMode === 'total' ? Number(activeTest.timerValue) * 60 : activeTest?.timerMode === 'question' ? Number(activeTest.timerValue) : 0);
   const [localTimerValue, setLocalTimerValue] = useState(activeTest?.timerValue);
   const [submitted, setSubmitted] = useState(false);
+  const [questionsWithAnswers, setQuestionsWithAnswers] = useState(activeTest?.questions || []);
+
+  const isInstant = activeTest?.feedbackMode === 'instant' || activeTest?.feedback_mode === 'instant';
+
+  // Fetch correct answers upfront if instant feedback is enabled
+  useEffect(() => {
+    if (activeTest && isInstant) {
+      const hasAnswers = activeTest.questions?.some(q => q.correct);
+      if (!hasAnswers) {
+        supabase.from('questions').select('id, correct_option, explanation').eq('test_id', activeTest.id).then(({ data }) => {
+          if (data) {
+            setQuestionsWithAnswers(activeTest.questions.map(q => {
+              const match = data.find(ans => ans.id === q.id);
+              return { ...q, correct: match?.correct_option, explanation: match?.explanation };
+            }));
+          }
+        });
+      } else {
+        setQuestionsWithAnswers(activeTest.questions);
+      }
+    } else if (activeTest) {
+      setQuestionsWithAnswers(activeTest.questions);
+    }
+  }, [activeTest, isInstant]);
 
   const answersRef = useRef(answers);
   useEffect(() => {
@@ -1232,7 +1363,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
   useEffect(() => {
     if (seconds === 0 && activeTest?.timerMode !== 'none') {
       if (activeTest.timerMode === 'total') submit();
-      else if (idx < activeTest.questions.length - 1) {
+      else if (idx < questionsWithAnswers.length - 1) {
         setIdx(x => x + 1);
         setSeconds(Number(activeTest.timerValue));
       } else submit();
@@ -1273,8 +1404,8 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
     return () => clearInterval(pollId);
   }, [activeTest, submitted, localTimerValue]);
 
-  if (!activeTest) return null;
-  const q = activeTest.questions[idx];
+  if (!activeTest || questionsWithAnswers.length === 0) return null;
+  const q = questionsWithAnswers[idx] || questionsWithAnswers[0];
   const select = (opt) => setAnswers(a => ({...a, [q.id]: opt}));
   const toggleMark = () => setMarked(m => ({ ...m, [q.id]: !m[q.id] }));
   const clearSelection = () => setAnswers(a => { const newA = { ...a }; delete newA[q.id]; return newA; });
@@ -1283,16 +1414,19 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
     if (submitted) return;
     setSubmitted(true);
     
-    // Securely fetch correct answers at the time of submission
-    const { data: answersData } = await supabase
-      .from('questions')
-      .select('id, correct_option, explanation')
-      .eq('test_id', activeTest.id);
-      
-    const fullQuestions = activeTest.questions.map(q => {
-      const match = answersData?.find(ans => ans.id === q.id);
-      return { ...q, correct: match?.correct_option, explanation: match?.explanation };
-    });
+    // Fetch correct answers at submission time if not already available
+    let fullQuestions = questionsWithAnswers;
+    if (!fullQuestions.some(x => x.correct)) {
+      const { data: answersData } = await supabase
+        .from('questions')
+        .select('id, correct_option, explanation')
+        .eq('test_id', activeTest.id);
+        
+      fullQuestions = activeTest.questions.map(q => {
+        const match = answersData?.find(ans => ans.id === q.id);
+        return { ...q, correct: match?.correct_option, explanation: match?.explanation };
+      });
+    }
 
     const score = fullQuestions.reduce((n, x) => n + (answersRef.current[x.id] === x.correct ? 1 : 0), 0);
     const a = {
@@ -1301,7 +1435,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
       userId: user?.id,
       answers: answersRef.current,
       score,
-      total: activeTest.questions.length,
+      total: fullQuestions.length,
       submittedAt: new Date().toISOString()
     };
     saveAttempt(a);
@@ -1310,20 +1444,21 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
 
   const min = Math.floor(seconds / 60), sec = String(seconds % 60).padStart(2, '0');
   const isPerQuestion = activeTest.timerMode === 'question';
+  const selectedAnswer = answers[q.id];
 
   return (
     <section className="attempt-shell">
       <div className="attempt-top">
         <button className="brand mini"><span>E</span>Evaluate</button>
         <div className="progress">
-          <span>Question {idx+1} of {activeTest.questions.length}</span>
-          <div><i style={{ width: `${((idx+1)/activeTest.questions.length)*100}%` }}/></div>
+          <span>Question {idx+1} of {questionsWithAnswers.length}</span>
+          <div><i style={{ width: `${((idx+1)/questionsWithAnswers.length)*100}%` }}/></div>
         </div>
         {activeTest.timerMode !== 'none' && <div className="timer"><Timer size={17}/>{min}:{sec}</div>}
       </div>
       <div className="attempt-body">
         <aside>
-          {activeTest.questions.map((x, i) => (
+          {questionsWithAnswers.map((x, i) => (
             <button 
               key={x.id} 
               className={(i===idx?'current ':'')+(answers[x.id]?'answered ':'')+(marked[x.id]?'marked':'')} 
@@ -1340,16 +1475,38 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
           <div className="options">
             {q.options.map((o, i) => {
               const letter = 'ABCD'[i];
+              const isSelected = selectedAnswer === letter;
+              const hasAnsweredInstant = isInstant && selectedAnswer;
+              const isCorrectOption = letter === q.correct;
+              
+              let optClass = isSelected ? 'chosen' : '';
+              if (hasAnsweredInstant) {
+                if (isSelected && isCorrectOption) optClass = 'chosen instant-correct';
+                else if (isSelected && !isCorrectOption) optClass = 'chosen instant-wrong';
+                else if (!isSelected && isCorrectOption) optClass = 'instant-correct';
+              }
+
               return (
-                <button key={letter} className={answers[q.id] === letter ? 'chosen' : ''} onClick={() => select(letter)}>
-                  <b>{letter}</b>{o}
+                <button key={letter} className={optClass} onClick={() => select(letter)}>
+                  <b>{letter}</b>
+                  <span style={{ flex: 1 }}>{o}</span>
+                  {hasAnsweredInstant && isCorrectOption && <CheckCircle2 size={18} className="status-icon correct-icon"/>}
+                  {hasAnsweredInstant && isSelected && !isCorrectOption && <XCircle size={18} className="status-icon wrong-icon"/>}
                 </button>
               );
             })}
           </div>
+
+          {isInstant && selectedAnswer && q.explanation && (
+            <div className="explanation" style={{ marginTop: '16px' }}>
+              <b>Explanation</b>
+              {q.explanation}
+            </div>
+          )}
+
           <div className="question-actions">
             {!isPerQuestion && (
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div>
                 <button className="secondary" disabled={idx === 0} onClick={() => setIdx(i => i - 1)}><ArrowLeft size={17}/>Previous</button>
                 <button className={`secondary ${marked[q.id] ? 'marked-btn' : ''}`} onClick={toggleMark}>
                   {marked[q.id] ? 'Unmark' : 'Mark for Review'}
@@ -1358,7 +1515,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
               </div>
             )}
             {isPerQuestion && <span/>}
-            {idx === activeTest.questions.length - 1 ? (
+            {idx === questionsWithAnswers.length - 1 ? (
               <button className="primary" onClick={submit}>Submit test <Check size={17}/></button>
             ) : (
               <button className="primary" onClick={() => { setIdx(i => i + 1); if (isPerQuestion) setSeconds(Number(activeTest.timerValue)); }}>Next <ArrowRight size={17}/></button>

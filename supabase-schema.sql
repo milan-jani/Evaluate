@@ -11,6 +11,7 @@ CREATE TABLE public.tests (
   start_at TIMESTAMPTZ,
   end_at TIMESTAMPTZ,
   attempt_limit INT DEFAULT 1,
+  feedback_mode TEXT DEFAULT 'end',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

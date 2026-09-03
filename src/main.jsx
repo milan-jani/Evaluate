@@ -681,6 +681,13 @@ function Dashboard({ user, tests, attempts, hostedAttempts, go }) {
       groups[a.testId].attempts.push(a);
     });
     return Object.values(groups).sort((a, b) => {
+      const highestScoreA = Math.max(...a.attempts.map(att => att.score || 0));
+      const highestScoreB = Math.max(...b.attempts.map(att => att.score || 0));
+      
+      if (highestScoreB !== highestScoreA) {
+        return highestScoreB - highestScoreA;
+      }
+
       const dateA = new Date(a.attempts[0]?.submittedAt || 0);
       const dateB = new Date(b.attempts[0]?.submittedAt || 0);
       return dateB - dateA;
@@ -1362,11 +1369,11 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
 
   useEffect(() => {
     if (seconds === 0 && activeTest?.timerMode !== 'none') {
-      if (activeTest.timerMode === 'total') submit();
+      if (activeTest.timerMode === 'total') submit(true);
       else if (idx < questionsWithAnswers.length - 1) {
         setIdx(x => x + 1);
         setSeconds(Number(activeTest.timerValue));
-      } else submit();
+      } else submit(true);
     }
   }, [seconds]);
 
@@ -1387,7 +1394,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
         if (data.end_at && now > new Date(data.end_at)) {
           clearInterval(pollId);
           alert('This test has been terminated by the host.');
-          submit();
+          submit(true);
           return;
         }
 
@@ -1406,12 +1413,25 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
 
   if (!activeTest || questionsWithAnswers.length === 0) return null;
   const q = questionsWithAnswers[idx] || questionsWithAnswers[0];
-  const select = (opt) => setAnswers(a => ({...a, [q.id]: opt}));
+  const select = (opt) => {
+    if (isInstant && answers[q.id]) return;
+    setAnswers(a => ({...a, [q.id]: opt}));
+  };
   const toggleMark = () => setMarked(m => ({ ...m, [q.id]: !m[q.id] }));
   const clearSelection = () => setAnswers(a => { const newA = { ...a }; delete newA[q.id]; return newA; });
 
-  const submit = async () => {
+  const submit = async (force = false) => {
     if (submitted) return;
+    
+    if (!force) {
+      const answeredCount = Object.keys(answersRef.current).length;
+      const markedCount = Object.values(marked).filter(Boolean).length;
+      const unansweredCount = questionsWithAnswers.length - answeredCount;
+      
+      const confirmMsg = `Are you sure you want to submit?\n\nAnswered: ${answeredCount}\nUnanswered: ${unansweredCount}\nMarked for Review: ${markedCount}`;
+      if (!window.confirm(confirmMsg)) return;
+    }
+
     setSubmitted(true);
     
     // Fetch correct answers at submission time if not already available
@@ -1454,7 +1474,10 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
           <span>Question {idx+1} of {questionsWithAnswers.length}</span>
           <div><i style={{ width: `${((idx+1)/questionsWithAnswers.length)*100}%` }}/></div>
         </div>
-        {activeTest.timerMode !== 'none' && <div className="timer"><Timer size={17}/>{min}:{sec}</div>}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          {activeTest.timerMode !== 'none' && <div className="timer"><Timer size={17}/>{min}:{sec}</div>}
+          <button className="secondary danger mini-btn" onClick={() => submit(false)} style={{ padding: '6px 12px', fontSize: '13px' }}>Submit Early</button>
+        </div>
       </div>
       <div className="attempt-body">
         <aside>
@@ -1511,12 +1534,12 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
                 <button className={`secondary ${marked[q.id] ? 'marked-btn' : ''}`} onClick={toggleMark}>
                   {marked[q.id] ? 'Unmark' : 'Mark for Review'}
                 </button>
-                {answers[q.id] && <button className="secondary" onClick={clearSelection}>Clear</button>}
+                {answers[q.id] && !isInstant && <button className="secondary" onClick={clearSelection}>Clear</button>}
               </div>
             )}
             {isPerQuestion && <span/>}
             {idx === questionsWithAnswers.length - 1 ? (
-              <button className="primary" onClick={submit}>Submit test <Check size={17}/></button>
+              <button className="primary" onClick={() => submit(false)}>Submit test <Check size={17}/></button>
             ) : (
               <button className="primary" onClick={() => { setIdx(i => i + 1); if (isPerQuestion) setSeconds(Number(activeTest.timerValue)); }}>Next <ArrowRight size={17}/></button>
             )}

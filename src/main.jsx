@@ -5,6 +5,7 @@ import {
   ArrowRight, 
   Check, 
   CheckCircle2, 
+  CircleDashed,
   ChevronRight, 
   Clock3, 
   Copy, 
@@ -160,6 +161,11 @@ function App() {
     if (code) {
       setInitialJoinCode(code);
       setPage('join');
+    } else {
+      const hash = window.location.hash.replace('#', '');
+      if (hash && ['dashboard', 'create', 'auth'].includes(hash)) {
+        setPage(hash);
+      }
     }
   }, []);
 
@@ -1331,6 +1337,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
   const [seconds, setSeconds] = useState(() => activeTest?.timerMode === 'total' ? Number(activeTest.timerValue) * 60 : activeTest?.timerMode === 'question' ? Number(activeTest.timerValue) : 0);
   const [localTimerValue, setLocalTimerValue] = useState(activeTest?.timerValue);
   const [submitted, setSubmitted] = useState(false);
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [questionsWithAnswers, setQuestionsWithAnswers] = useState(activeTest?.questions || []);
 
   const isInstant = activeTest?.feedbackMode === 'instant' || activeTest?.feedback_mode === 'instant';
@@ -1424,12 +1431,8 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
     if (submitted) return;
     
     if (!force) {
-      const answeredCount = Object.keys(answersRef.current).length;
-      const markedCount = Object.values(marked).filter(Boolean).length;
-      const unansweredCount = questionsWithAnswers.length - answeredCount;
-      
-      const confirmMsg = `Are you sure you want to submit?\n\nAnswered: ${answeredCount}\nUnanswered: ${unansweredCount}\nMarked for Review: ${markedCount}`;
-      if (!window.confirm(confirmMsg)) return;
+      setShowSubmitConfirm(true);
+      return;
     }
 
     setSubmitted(true);
@@ -1468,6 +1471,23 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
 
   return (
     <section className="attempt-shell">
+      {showSubmitConfirm && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="modal-card" style={{ maxWidth: '400px', textAlign: 'center' }}>
+            <h3 style={{ marginTop: 0 }}>Confirm Submission</h3>
+            <p style={{ margin: '15px 0' }}>Are you sure you want to submit your test?</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', textAlign: 'left', background: 'var(--card-bg)', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid var(--border-subtle)' }}>
+              <div><b style={{color: 'var(--text-main)'}}>Answered:</b> {Object.keys(answersRef.current).length}</div>
+              <div><b style={{color: 'var(--text-main)'}}>Unanswered:</b> {questionsWithAnswers.length - Object.keys(answersRef.current).length}</div>
+              <div style={{ gridColumn: '1 / -1' }}><b style={{color: 'var(--text-main)'}}>Marked for Review:</b> {Object.values(marked).filter(Boolean).length}</div>
+            </div>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              <button className="secondary" onClick={() => setShowSubmitConfirm(false)}>Cancel</button>
+              <button className="primary" onClick={() => { setShowSubmitConfirm(false); submit(true); }}>Yes, Submit</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="attempt-top">
         <button className="brand mini"><span>E</span>Evaluate</button>
         <div className="progress">
@@ -1480,7 +1500,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
         </div>
       </div>
       <div className="attempt-body">
-        <aside>
+        <aside style={{ display: 'grid', gridTemplateColumns: questionsWithAnswers.length < 50 ? 'repeat(5, 1fr)' : 'repeat(10, 1fr)', gap: '6px', alignContent: 'start' }}>
           {questionsWithAnswers.map((x, i) => (
             <button 
               key={x.id} 
@@ -1529,7 +1549,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
 
           <div className="question-actions">
             {!isPerQuestion && (
-              <div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <button className="secondary" disabled={idx === 0} onClick={() => setIdx(i => i - 1)}><ArrowLeft size={17}/>Previous</button>
                 <button className={`secondary ${marked[q.id] ? 'marked-btn' : ''}`} onClick={toggleMark}>
                   {marked[q.id] ? 'Unmark' : 'Mark for Review'}
@@ -1567,12 +1587,14 @@ function Result({ activeTest, go }) {
       <div className="review-list">
         {test.questions.map((q, i) => {
           const answer = attempt.answers[q.id], correct = answer === q.correct;
+          const statusText = correct ? 'Correct' : (!answer ? 'Unanswered' : 'Incorrect');
+          const statusClass = correct ? 'correct' : (!answer ? 'unanswered' : 'wrong');
           return (
-            <div className={'review-item ' + (correct ? 'correct' : 'wrong')} key={q.id}>
+            <div className={`review-item ${statusClass}`} key={q.id}>
               <div className="review-head">
-                {correct ? <CheckCircle2/> : <XCircle/>}
+                {correct ? <CheckCircle2/> : (!answer ? <CircleDashed/> : <XCircle/>)}
                 <span>QUESTION {i+1}</span>
-                <b>{correct ? 'Correct' : 'Incorrect'}</b>
+                <b>{statusText}</b>
               </div>
               <h3>{q.question}</h3>
               <div className="review-options">

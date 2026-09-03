@@ -766,6 +766,7 @@ body.dark-theme .error { background: #321917; color: #ff8e85; }
   box-shadow: var(--shadow);
 }
 .review-item.correct { border-left-color: #4a9270; }
+.review-item.unanswered { border-left-color: #888888; }
 .review-head {
   display: flex;
   align-items: center;
@@ -776,8 +777,10 @@ body.dark-theme .error { background: #321917; color: #ff8e85; }
 }
 .review-head svg { width: 18px; color: #bb5b51; }
 .review-item.correct .review-head svg { color: #39865e; }
+.review-item.unanswered .review-head svg { color: #888888; }
 .review-head b { margin-left: auto; font-size: 11px; color: #a84d44; }
 .review-item.correct .review-head b { color: #347d56; }
+.review-item.unanswered .review-head b { color: #888888; }
 .review-item h3 { font-size: 16px; margin: 12px 0; }
 .review-item p { font-size: 13px; color: var(--text-muted); margin: 7px 0; }
 .explanation {

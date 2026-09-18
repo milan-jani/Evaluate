@@ -33,6 +33,7 @@ import './styles.css';
 
 const SAMPLE_CSV = `question,option_a,option_b,option_c,option_d,correct_option,explanation
 "Which normal form removes partial dependency?","1NF","2NF","3NF","BCNF","B","Partial dependencies are removed in 2NF."
+"What will be the output?\\n\`\`\`\\nlet a = [1, 2, 3];\\nlet b = a;\\nb.push(4);\\nconsole.log(a.length);\\n\`\`\`","3","4","undefined","Error","B","In JavaScript, arrays are reference types, so modifying \`b\` also modifies \`a\`."
 "Which SQL command removes a table definition?","DELETE","DROP","TRUNCATE","REMOVE","B","DROP removes a table definition."`;
 
 const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -48,6 +49,57 @@ const toDatetimeLocal = (isoString) => {
   const MIN = ten(date.getMinutes());
   return `${YYYY}-${MM}-${DD}T${HH}:${MIN}`;
 };
+
+function renderText(text) {
+  if (text === null || text === undefined || text === '') return null;
+  const str = typeof text === 'string' ? text.replace(/\\n/g, '\n') : String(text);
+  
+  // Split by code blocks (```...```)
+  const parts = str.split(/(```[\s\S]*?```)/g);
+  
+  return parts.map((part, i) => {
+    if (part.startsWith('```') && part.endsWith('```')) {
+      let code = part.slice(3, -3);
+      // Strip optional language identifier on first line (e.g. ```js\n...)
+      const firstNewline = code.indexOf('\n');
+      if (firstNewline !== -1 && !code.slice(0, firstNewline).includes(' ') && code.slice(0, firstNewline).length <= 15) {
+        code = code.slice(firstNewline + 1);
+      } else if (code.startsWith('\n')) {
+        code = code.slice(1);
+      }
+      if (code.endsWith('\n')) {
+        code = code.slice(0, -1);
+      }
+      return (
+        <pre key={i} className="code-block">
+          <code>{code}</code>
+        </pre>
+      );
+    }
+    
+    // Process inline code (`...`) and line breaks
+    const inlineParts = part.split(/(`[^`]+`)/g);
+    return (
+      <span key={i}>
+        {inlineParts.map((seg, j) => {
+          if (seg.startsWith('`') && seg.endsWith('`')) {
+            return (
+              <code key={j} className="inline-code">
+                {seg.slice(1, -1)}
+              </code>
+            );
+          }
+          return seg.split('\n').map((line, k, arr) => (
+            <React.Fragment key={`${j}-${k}`}>
+              {line}
+              {k < arr.length - 1 && <br />}
+            </React.Fragment>
+          ));
+        })}
+      </span>
+    );
+  });
+}
 
 function parseCsv(text) {
   const rows = []; let row = [], value = '', quoted = false;
@@ -72,11 +124,18 @@ function parseCsv(text) {
   const required = ['question','option_a','option_b','option_c','option_d','correct_option'];
   const missing = required.filter(h => !headers.includes(h));
   if (missing.length) throw new Error(`Missing columns: ${missing.join(', ')}`);
+  const unesc = (s) => (s ? s.replace(/\\n/g, '\n') : '');
   return rows.slice(1).map((r, index) => {
     const obj = Object.fromEntries(headers.map((h, i) => [h, r[i] || '']));
     const correct = obj.correct_option.toUpperCase();
     if (required.some(h => !obj[h]) || !['A','B','C','D'].includes(correct)) throw new Error(`Question ${index + 1} is incomplete or has an invalid correct_option.`);
-    return { id: uid(), question: obj.question, options: [obj.option_a, obj.option_b, obj.option_c, obj.option_d], correct, explanation: obj.explanation || '' };
+    return { 
+      id: uid(), 
+      question: unesc(obj.question), 
+      options: [unesc(obj.option_a), unesc(obj.option_b), unesc(obj.option_c), unesc(obj.option_d)], 
+      correct, 
+      explanation: unesc(obj.explanation || '') 
+    };
   });
 }
 
@@ -1514,7 +1573,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
         </aside>
         <article className="question-card">
           <span className="eyebrow">QUESTION {idx+1}</span>
-          <h2>{q.question}</h2>
+          <h2>{renderText(q.question)}</h2>
           <div className="options">
             {q.options.map((o, i) => {
               const letter = 'ABCD'[i];
@@ -1532,7 +1591,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
               return (
                 <button key={letter} className={optClass} onClick={() => select(letter)}>
                   <b>{letter}</b>
-                  <span style={{ flex: 1 }}>{o}</span>
+                  <span style={{ flex: 1 }}>{renderText(o)}</span>
                   {hasAnsweredInstant && isCorrectOption && <CheckCircle2 size={18} className="status-icon correct-icon"/>}
                   {hasAnsweredInstant && isSelected && !isCorrectOption && <XCircle size={18} className="status-icon wrong-icon"/>}
                 </button>
@@ -1543,7 +1602,7 @@ function Attempt({ activeTest, user, saveAttempt, go }) {
           {isInstant && selectedAnswer && q.explanation && (
             <div className="explanation" style={{ marginTop: '16px' }}>
               <b>Explanation</b>
-              {q.explanation}
+              {renderText(q.explanation)}
             </div>
           )}
 
@@ -1596,14 +1655,14 @@ function Result({ activeTest, go }) {
                 <span>QUESTION {i+1}</span>
                 <b>{statusText}</b>
               </div>
-              <h3>{q.question}</h3>
+              <h3>{renderText(q.question)}</h3>
               <div className="review-options">
                 {q.options.map((option, optionIndex) => {
                   const letter = 'ABCD'[optionIndex], selected = answer === letter, isCorrect = letter === q.correct;
                   const state = correct && selected ? 'right' : !correct && selected ? 'wrong-answer' : !correct && isCorrect ? 'right' : '';
                   return (
                     <div className={`review-option ${state}`} key={letter}>
-                      <b>{letter}</b><span>{option}</span>
+                      <b>{letter}</b><span>{renderText(option)}</span>
                       {selected && correct && <Check size={18} className="status-icon correct-icon" />}
                       {selected && !correct && <XCircle size={18} className="status-icon wrong-icon" />}
                       {!selected && isCorrect && <Check size={18} className="status-icon correct-icon" />}
@@ -1611,7 +1670,7 @@ function Result({ activeTest, go }) {
                   );
                 })}
               </div>
-              {q.explanation && <div className="explanation"><b>Explanation</b>{q.explanation}</div>}
+              {q.explanation && <div className="explanation"><b>Explanation</b>{renderText(q.explanation)}</div>}
             </div>
           );
         })}

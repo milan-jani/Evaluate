@@ -52,7 +52,10 @@ const toDatetimeLocal = (isoString) => {
 
 function renderText(text) {
   if (text === null || text === undefined || text === '') return null;
-  const str = typeof text === 'string' ? text.replace(/\\n/g, '\n') : String(text);
+  const str = (typeof text === 'string' ? text : String(text))
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\\n/g, '\n');
   
   // Split by code blocks (```...```)
   const parts = str.split(/(```[\s\S]*?```)/g);
@@ -124,7 +127,7 @@ function parseCsv(text) {
   const required = ['question','option_a','option_b','option_c','option_d','correct_option'];
   const missing = required.filter(h => !headers.includes(h));
   if (missing.length) throw new Error(`Missing columns: ${missing.join(', ')}`);
-  const unesc = (s) => (s ? s.replace(/\\n/g, '\n') : '');
+  const unesc = (s) => (s ? s.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\\n/g, '\n') : '');
   return rows.slice(1).map((r, index) => {
     const obj = Object.fromEntries(headers.map((h, i) => [h, r[i] || '']));
     const correct = obj.correct_option.toUpperCase();
